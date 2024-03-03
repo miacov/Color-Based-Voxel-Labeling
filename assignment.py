@@ -31,6 +31,7 @@ previous_masks = []
 # Lookup table for voxels
 lookup_table = None
 voxel_points = None
+voxel_size = 30
 
 
 def generate_grid(width, depth):
@@ -50,12 +51,12 @@ def set_voxel_positions(width, height, depth):
     subtraction models from video frames. Each time this function is called, the video moves to the next frame.
 
     :param width: determines voxel volume width
-    :param height: determines half of voxel volume height
+    :param height: determines voxel volume height
     :param depth: determines voxel volume depth
-    :return:
+    :return: returns visible voxel data and colors
     """
-    global initialized, videos, bg_models, cam_bg_model_params, current_frames, frame_count, \
-           lookup_table, voxel_points
+    global block_size, voxel_size, initialized, videos, bg_models, cam_bg_model_params, current_frames, frame_count, \
+        lookup_table, voxel_points
 
     # Check whether initialization with loading videos and training background models has already been done
     if not initialized:
@@ -75,7 +76,7 @@ def set_voxel_positions(width, height, depth):
                                                                                noise_sigma=0))
 
         # Calculate voxel volume
-        voxel_points = voxel_reconstruction.create_voxel_volume(width, height*2, depth)
+        voxel_points = voxel_reconstruction.create_voxel_volume((width, height, depth), voxel_size, block_size)
 
         # Create lookup table
         lookup_table = voxel_reconstruction.create_lookup_table(voxel_points, 4, "data", "config.xml")
@@ -101,43 +102,25 @@ def set_voxel_positions(width, height, depth):
             background_subtraction.extract_foreground_mask(current_frame, bg_models[camera], 0, params[0], params[1],
                                                            params[2], params[3], params[4], params[5])))
 
-    # Get voxel visibility and colors dictionaries
-    voxels_visible, voxels_visible_colors = \
-        voxel_reconstruction.update_visible_voxels_and_extract_colors(lookup_table, current_fg_masks, current_frames)
+    # Get voxels that are on and their colors from each camera
+    voxels_on, voxels_on_colors\
+        = voxel_reconstruction.update_visible_voxels_and_extract_colors((width, height, depth), lookup_table,
+                                                                        current_fg_masks, current_frames)
 
-    # Select voxels for viewing by only keeping voxels visible by all 4 cameras
+    # Format voxels that are on for viewing
     data = []
     colors = []
-    scaling_factor = 64
-    views_threshold = 4
-    #voxels_on = []
-    for voxel, views in voxels_visible.items():
-        if sum(views.values()) >= views_threshold:
-            #if voxel not in voxels_on:
-            #    voxels_on.append(voxel)
+    for x in range(width):
+        for y in range(height):
+            for z in range(depth):
+                if voxels_on[x, z, y]:
+                    data.append([x * block_size - width / 2,
+                                 y * block_size,
+                                 z * block_size - depth / 2])
 
-            # Swap y and z and flip sign of y
-            x = voxel[0] / scaling_factor
-            y = - (voxel[2] / scaling_factor)
-            z = voxel[1] / scaling_factor
-            data.append([x, y, z])
-
-            # Use color of only 2nd camera (front) and convert to 0-1
-            colors.append(voxels_visible_colors[voxel][2][::-1] / 255.0)
-    """
-    # Marching cubes plot
-    voxels = []
-    for camera, voxel_list in lookup_table.items():
-        for voxel, (x, y) in voxel_list:
-            voxels.append(voxel)
-        break
-        
-    
-    voxels_status = [voxel in voxels_on for voxel in voxels]
-    voxels_status = np.reshape(np.array(voxels_status), (width, height*2, depth))
-
-    voxel_reconstruction.plot_marching_cubes(voxels_status)
-    """
+                    # Use color of only 2nd camera (front) and convert to 0-1
+                    colors.append([voxels_on_colors[x, z, y][1][::-1] / 255.0])
+                    #colors.append([x / width, z / depth, y / height])
 
     return data, colors
 

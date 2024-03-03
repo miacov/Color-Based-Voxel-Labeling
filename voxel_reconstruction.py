@@ -32,96 +32,104 @@ def load_config_info(config_info_path="data/cam", config_input_filename="config.
     return mtx, dist, rvecs, tvecs
 
 
-def create_voxel_volume(num_voxels_x=128, num_voxels_y=128, num_voxels_z=128, x_min=-512, x_max=1024, y_min=-1024,
-                        y_max=1024, z_min=-2048, z_max=512):
+def create_voxel_volume(voxel_volume_shape, voxel_size, block_size):
     """
-    Creates voxel volume points given dimensions and linear spaces.
+    Creates voxel volume points given dimensions.
 
-    :param num_voxels_x: number of voxels in x range
-    :param num_voxels_y: number of voxels in y range
-    :param num_voxels_z: number of voxels in z range
-    :param x_min: min x for sampling x range
-    :param x_max: max x for sampling x range
-    :param y_min: min y for sampling y range
-    :param y_max: max y for sampling y range
-    :param z_min: min z for sampling z range
-    :param z_max: max z for sampling z range
-    :return: voxel volume points
+    :param voxel_volume_shape: voxel volume shape dimensions (width, height, depth)
+    :param voxel_size: distance in mm for voxels
+    :param block_size: block size unit
+    :return: returns voxel volume points (dimensions as width x depth x height, height being flipped)
     """
-    # Sample ranges
-    x_range = np.linspace(x_min, x_max, num=num_voxels_x)
-    y_range = np.linspace(y_min, y_max, num=num_voxels_y)
-    z_range = np.linspace(z_min, z_max, num=num_voxels_z)
+    # Volume shape dimensions
+    width = voxel_volume_shape[0]
+    height = voxel_volume_shape[1]
+    depth = voxel_volume_shape[2]
 
-    # Generate points
-    voxel_points = np.array(np.meshgrid(x_range, y_range, z_range)).T.reshape(-1, 3)
+    # Create volume space
+    voxel_points = []
+    for x in range(width):
+        for y in range(height):
+            for z in range(depth):
+                # Swap y and z
+                voxel_points.append(
+                    [voxel_size * (x * block_size - width / 2),
+                     voxel_size * (z * block_size - depth / 2),
+                     - voxel_size * (y * block_size)])
 
-    return voxel_points
+    return np.array(voxel_points, dtype=np.float32)
 
 
 def create_lookup_table(voxel_points, num_cameras, cam_input_path="data", config_input_filename="config.xml"):
     """
     Creates lookup table to map 3D voxels to 2D points for a number of cameras.
 
-    :param voxel_points: voxel volume points
+    :param voxel_points: voxel volume points (dimensions as width x depth x height, height being flipped)
     :param num_cameras: number of cameras
     :param cam_input_path: camera root directory path
     :param config_input_filename: config file name (found in respective camera folders in cam_input_path)
-    :return: dictionary of projected voxel points for every camera (camera id as key, tuple of voxel position tuple and
-             points position tuple as value)
+    :return: returns array of projected voxel image points for every camera
     """
     # Lookup entry for every camera
-    lookup_table = {camera: [] for camera in range(1, num_cameras+1)}
-    for camera in range(1, num_cameras+1):
+    lookup_table = []
+    for camera in range(num_cameras):
         # Load camera parameters
-        config_path = os.path.join(cam_input_path, "cam" + str(camera))
+        config_path = os.path.join(cam_input_path, "cam" + str(camera+1))
         mtx, dist, rvecs, tvecs = load_config_info(config_path, config_input_filename)
 
         # Project 3D voxel points to image plane and store them
         image_points_voxels, _ = cv2.projectPoints(voxel_points, rvecs, tvecs, mtx, dist)
-        for voxel, img_point in zip(voxel_points, image_points_voxels):
-            x, y = img_point[0]
-            lookup_table[camera].append((tuple(map(int, voxel)), (x, y)))
+        lookup_table.append(image_points_voxels)
 
-    return lookup_table
+    return np.array(lookup_table, dtype=np.float32)
 
 
-def update_visible_voxels_and_extract_colors(lookup_table, fg_masks, images):
+def update_visible_voxels_and_extract_colors(voxel_volume_shape, lookup_table, fg_masks, images):
     """
-    Updates visibility for voxels by checking if they are visible by a camera view and extracts colors for every camera
-    view.
+    Updates visibility for voxels by checking if they are visible by all camera views and extracts colors for every
+    camera view for turned on voxels.
 
+    :param voxel_volume_shape: voxel volume shape dimensions (width, height, depth)
     :param lookup_table: lookup table of projected voxel image points per camera
     :param fg_masks: foreground masks for every camera
     :param images: images to get colors from for every camera
-    :return: dictionary of visible corners and whether they are seen by a camera and dictionary of colors per camera
-             for the visible voxels
+    :return: returns array of voxels and whether they are seen by all camera views and array of colors for all visible
+             voxels for every camera view
     """
-    # Storing voxel points and their colors per camera
-    voxels_visible = {}
-    voxels_visible_colors = {}
+    # Volume shape dimensions
+    width = voxel_volume_shape[0]
+    height = voxel_volume_shape[1]
+    depth = voxel_volume_shape[2]
 
-    # Go through voxels of every camera
-    for camera, voxel_list in lookup_table.items():
-        camera_arr_idx = camera-1
-        # Go through image points of every voxel
-        for voxel, (x, y) in voxel_list:
-            # Check if voxel projection is within image boundaries
-            if 0 <= y < fg_masks[camera_arr_idx].shape[0] and 0 <= x < fg_masks[camera_arr_idx].shape[1]:
-                # Check if voxel is visible from camera
-                if fg_masks[camera_arr_idx][int(y), int(x)] > 0:
-                    # Update visibility for current camera
-                    if voxel not in voxels_visible:
-                        voxels_visible[voxel] = {}
-                    voxels_visible[voxel][camera] = True
+    # Storing voxel visibility as True if voxel is turned on, False if not
+    voxels_on = np.ones((width, depth, height), dtype=bool)
+    # Storing colors for each voxel for each camera
+    voxels_on_colors = np.empty((width, depth, height, len(fg_masks), 3), dtype=np.uint8)
 
-                    # Store color from frame for current camera
-                    color = images[camera_arr_idx][int(y), int(x), :]
-                    if voxel not in voxels_visible_colors:
-                        voxels_visible_colors[voxel] = {}
-                    voxels_visible_colors[voxel][camera] = np.array(color)
+    # set voxel to off if it is not visible in the camera, or is not in the foreground
+    for camera in range(1, len(fg_masks)+1):
+        for x in range(width):
+            for y in range(height):
+                for z in range(depth):
+                    if not voxels_on[x, z, y]:
+                        continue
+                    # Get voxel index
+                    voxel_idx = z + y * depth + x * (depth * height)
+                    # Voxel projection on image plane
+                    x_im = int(lookup_table[camera-1][voxel_idx][0][0])
+                    y_im = int(lookup_table[camera-1][voxel_idx][0][1])
 
-    return voxels_visible, voxels_visible_colors
+                    # Check if voxel projection is within image boundaries and if it is visible from current camera
+                    if not (0 <= y_im < fg_masks[camera-1].shape[0] and 0 <= x_im < fg_masks[camera-1].shape[1] and
+                            fg_masks[camera-1][y_im, x_im] > 0):
+                        # If a voxel is not visible for a camera then it is turned off and its color is removed
+                        voxels_on[x, z, y] = False
+                        voxels_on_colors[x, z, y, camera-1] = np.zeros((3,), dtype=np.uint8)
+                    else:
+                        # Store color from color frame for current camera
+                        voxels_on_colors[x, z, y, camera-1] = images[camera-1][y_im, x_im, :].astype(np.uint8)
+
+    return voxels_on, voxels_on_colors
 
 
 def plot_marching_cubes(voxels_status, rotate=True, plot_output_path="plots",
