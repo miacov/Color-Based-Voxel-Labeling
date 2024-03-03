@@ -1,5 +1,4 @@
 import glm
-import random
 import numpy as np
 import cv2
 import os
@@ -25,9 +24,8 @@ cam_bg_model_params = [
     [5000, 115, False, False, False, True]
 ]
 # Currently loaded frames and their index
-current_frames = []
 frame_count = 0
-previous_masks = []
+frame_interval = 50
 # Lookup table for voxels
 lookup_table = None
 voxel_points = None
@@ -55,11 +53,12 @@ def set_voxel_positions(width, height, depth):
     :param depth: determines voxel volume depth
     :return: returns visible voxel data and colors
     """
-    global block_size, voxel_size, initialized, videos, bg_models, cam_bg_model_params, current_frames, frame_count, \
-        lookup_table, voxel_points
+    global initialized, lookup_table, voxel_points, voxel_size, block_size, \
+        bg_models, cam_bg_model_params, videos, frame_count, frame_interval
 
     # Check whether initialization with loading videos and training background models has already been done
     if not initialized:
+        print("Initializing background models, voxel volume, and lookup table.")
         # Load videos and train background models for every camera
         for camera in range(4):
             directory = os.path.join("data", "cam" + str(camera+1))
@@ -68,10 +67,10 @@ def set_voxel_positions(width, height, depth):
             videos.append(cv2.VideoCapture(os.path.join(directory, "video.avi")))
 
             # Give frame count of video as history for background model training
-            _, _, frame_count = utils.get_video_properties(directory, "background.avi")
+            _, _, bg_frame_count = utils.get_video_properties(directory, "background.avi")
             # Train background model
             bg_models.append(background_subtraction.train_MOG_background_model(directory, "background.avi",
-                                                                               use_hsv=True, history=frame_count,
+                                                                               use_hsv=True, history=bg_frame_count,
                                                                                n_mixtures=50, bg_ratio=0.90,
                                                                                noise_sigma=0))
 
@@ -84,11 +83,29 @@ def set_voxel_positions(width, height, depth):
         # Flag initialization is complete
         initialized = True
 
-    # Read next frame in video
-    current_frames = [video.read()[1] for video in videos]
-    if any(frame is None for frame in current_frames):
-        return [], []
-    frame_count += 1
+    # Read next frame in every video with interval
+    current_frames = []
+    for video in videos:
+        frame_count_video = frame_count
+        while True:
+            ret_frame, current_frame = video.read()
+
+            # If any video ended then stop and show no voxels
+            if not ret_frame:
+                for cap in videos:
+                    cap.release()
+                return [], []
+
+            # Check if frame will be used according to interval
+            if frame_count_video % frame_interval == 0:
+                current_frames.append(current_frame)
+                break
+
+            frame_count_video += 1
+    if frame_count == 0:
+        frame_count += 1
+    else:
+        frame_count += frame_interval
 
     # Extract foreground mask from video frame for each camera
     current_fg_masks = []
@@ -103,6 +120,8 @@ def set_voxel_positions(width, height, depth):
                                                            params[2], params[3], params[4], params[5])))
 
     # Get voxels that are on and their colors from each camera
+    print("\nFinding visible voxels for frame " + str(frame_count-1) +
+          " (second " + str(int((frame_count-1)/frame_interval)) + ") of videos.")
     voxels_on, voxels_on_colors\
         = voxel_reconstruction.update_visible_voxels_and_extract_colors((width, height, depth), lookup_table,
                                                                         current_fg_masks, current_frames)
@@ -121,6 +140,13 @@ def set_voxel_positions(width, height, depth):
                     # Use color of only 2nd camera (front) and convert to 0-1
                     colors.append([voxels_on_colors[x, z, y][1][::-1] / 255.0])
                     #colors.append([x / width, z / depth, y / height])
+
+    # Plot marching cubes algorithm results
+    if frame_count-1 == 0:
+        print("Running marching cubes algorithm for frame " + str(frame_count-1) +
+              " (second " + str(int((frame_count-1)/frame_interval)) + ") of videos.")
+        voxel_reconstruction.plot_marching_cubes(voxels_on, rotate=True, plot_output_filename="marching_cubes_front")
+        voxel_reconstruction.plot_marching_cubes(voxels_on, rotate=False, plot_output_filename="marching_cubes_back")
 
     return data, colors
 
@@ -141,7 +167,7 @@ def get_cam_positions():
     for camera in range(4):
         # Get camera rotation and translation
         _, _, rvecs, tvecs = voxel_reconstruction.load_config_info(os.path.join("data", "cam" + str(camera+1)),
-                                                                                "config.xml")
+                                                                   "config.xml")
         rmtx, _ = cv2.Rodrigues(rvecs)
 
         # Get camera position
@@ -176,7 +202,7 @@ def get_cam_rotation_matrices():
     for camera in range(4):
         # Get camera rotation
         _, _, rvecs, _ = voxel_reconstruction.load_config_info(os.path.join("data", "cam" + str(camera+1)),
-                                                                            "config.xml")
+                                                               "config.xml")
         rmtx, _ = cv2.Rodrigues(rvecs)
 
         # Convert OpenCV rotation matrix (row-major) to OpenGL rotation matrix (column-major)
