@@ -86,16 +86,16 @@ def create_lookup_table(voxel_points, num_cameras, cam_input_path="data", config
 
 def update_visible_voxels_and_extract_colors(voxel_volume_shape, lookup_table, fg_masks, images):
     """
-    Updates visibility for voxels by checking if they are visible by all camera views and extracts colors for every
-    camera view for turned on voxels.
+    Updates visibility for voxels by checking if they are visible by all camera views as foreground and extracts colors
+    for every camera view for turned on voxels.
 
     :param voxel_volume_shape: voxel volume shape dimensions (width, height, depth)
     :param lookup_table: lookup table of projected voxel image points per camera
     :param fg_masks: foreground masks for every camera
     :param images: images to get colors from for every camera
-    :return: returns 3D array of booleans indicating whether a voxel is seen by all camera views or not (dimensions as
-             width x depth x height) and 3D array of colors for all visible voxels for every camera view (dimensions as
-             width x depth x height x camera)
+    :return: returns 3D array of booleans indicating whether a voxel is seen by all camera views as foreground or not
+             (dimensions as width x depth x height) and 3D array of colors for all visible voxels for every camera view
+             (dimensions as width x depth x height x camera)
     """
     # Volume shape dimensions
     width = voxel_volume_shape[0]
@@ -107,7 +107,7 @@ def update_visible_voxels_and_extract_colors(voxel_volume_shape, lookup_table, f
     # Storing colors for each voxel for each camera
     voxels_on_colors = np.empty((width, depth, height, len(fg_masks), 3), dtype=np.uint8)
 
-    # set voxel to off if it is not visible in the camera, or is not in the foreground
+    # Set voxels to off if they are not visible in every camera as foreground
     for camera in range(len(fg_masks)):
         for x in range(width):
             for y in range(height):
@@ -142,8 +142,8 @@ def plot_marching_cubes(voxels_on, rotate=True, plot_output_path="plots", plot_o
     """
     Runs marching cubes algorithm on activated voxels and plots results.
 
-    :param voxels_on: 3D array of booleans indicating whether a voxel is seen by all camera views or not (dimensions as
-                      width x depth x height)
+    :param voxels_on: 3D array of booleans indicating whether a voxel is seen by all camera views as foreground or not
+                      (dimensions as width x depth x height)
     :param rotate: if True then rotates figure in plot to view it from the front, otherwise viewing it from the back
     :param plot_output_path: plot output directory path
     :param plot_output_filename: plot output file name (including extension)

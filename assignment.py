@@ -2,7 +2,6 @@ import glm
 import numpy as np
 import cv2
 import os
-import camera_calibration
 import background_subtraction
 import voxel_reconstruction
 import utils
@@ -158,9 +157,7 @@ def get_cam_positions():
 
     :return: returns position for every camera and color vector for every camera
     """
-    # Fix scale back to 1 unit
-    _, chessboard_square_size = camera_calibration.load_chessboard_info("data", "checkerboard.xml")
-    scale = 1.0 / chessboard_square_size
+    global voxel_size
 
     # Get all camera positions
     camera_positions = []
@@ -171,7 +168,7 @@ def get_cam_positions():
         rmtx, _ = cv2.Rodrigues(rvecs)
 
         # Get camera position
-        position = -np.matrix(rmtx).T * np.matrix(tvecs) * scale
+        position = -np.matrix(rmtx).T * np.matrix(tvecs/voxel_size)
 
         # Swap Y and Z axis for OpenGL system and make new Y negative to face the viewer
         camera_positions.append([position[0][0], -position[2][0], position[1][0]])
