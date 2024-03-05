@@ -262,8 +262,39 @@ def extract_corners(image, bg_model):
     # Erode and then dilate (opening) to remove noise
     bg_model_mask = cv2.morphologyEx(bg_model_mask, cv2.MORPH_OPEN, kernel)
 
-    # Get chessboard region using the foreground mask from the background model and improve contrast
-    chessboard = cv2.bitwise_and(image, image, mask=bg_model_mask)
+    # Isolate chessboard
+    # Remove shadows in the case of a figure present in the foreground
+    bg_model_mask[bg_model_mask == 127] = 0
+    # Get all foreground contours
+    contours, _ = cv2.findContours(bg_model_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Remove small contours
+    contours = [contour for contour in contours if cv2.contourArea(contour) > 50]
+    # Iterate through contours and discard contours that aren't the chessboard
+    # Create a blank mask image
+    chessboard_mask = np.zeros_like(bg_model_mask)
+    for contour in contours:
+        # Find corners
+        perimeter = cv2.arcLength(contour, True)
+        corners = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
+
+        # Check if contour is a rhombus like the shape of the chessboard
+        if len(corners) == 4:
+            # Calculate center
+            M = cv2.moments(contour)
+            if M["m00"] != 0:
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+
+                # Calculate distances from center to vertices
+                distances = [np.sqrt((corner[0][0] - cx) ** 2 + (corner[0][1] - cy) ** 2) for corner in corners]
+
+                # Check if distances are approximately equal
+                if all(abs(distance - distances[0]) < 50 for distance in distances):
+                    # Draw contour on mask
+                    cv2.drawContours(chessboard_mask, [contour], -1, 255, thickness=cv2.FILLED)
+
+    # Get chessboard region using the chessboard foreground mask and improve contrast
+    chessboard = cv2.bitwise_and(image, image, mask=chessboard_mask)
     chessboard_gray = cv2.cvtColor(chessboard, cv2.COLOR_BGR2GRAY)
     chessboard_gray = cv2.equalizeHist(chessboard_gray)
 
@@ -271,7 +302,7 @@ def extract_corners(image, bg_model):
     _, chessboard_binary_white = cv2.threshold(chessboard_gray, 120, 255, cv2.THRESH_BINARY)
 
     # Get black square contours
-    contours, hierarchy = cv2.findContours(chessboard_binary_white, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(chessboard_binary_white, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     # Extract convex hull (form a polygon from contours)
     contours_hull = cv2.convexHull(np.concatenate(contours))
     # Draw convex hull (chessboard without the excess white around it)
@@ -289,8 +320,8 @@ def extract_corners(image, bg_model):
     black_points = np.column_stack((x, y))
     # Extract convex hull (form a polygon from points)
     black_points_hull = cv2.convexHull(black_points)
-    perimeter = cv2.arcLength(black_points_hull, True)
     # Find corners
+    perimeter = cv2.arcLength(black_points_hull, True)
     corners = cv2.approxPolyDP(black_points_hull, 0.02 * perimeter, True)
 
     return corners.reshape(-1, 2)
@@ -321,7 +352,7 @@ def extract_corners_and_interpolate_image_points(image, chessboard_shape, bg_vid
     # Train background model
     bg_model_knn = background_subtraction.train_KNN_background_model(bg_video_input_path, bg_video_input_filename,
                                                                      use_hsv=False, history=frame_count,
-                                                                     dist_threshold=425, detect_shadows=False)
+                                                                     dist_threshold=425, detect_shadows=True)
 
     # Approximate 4 outer corners
     outer_corners = extract_corners(image, bg_model_knn)
@@ -396,7 +427,7 @@ def extract_corners_and_interpolate_image_points(image, chessboard_shape, bg_vid
 def extract_image_points_from_video(chessboard_shape, video_input_path="data/cam",
                                     video_input_filename="intrinsics.avi", frame_interval=50, stop_frame=-1,
                                     more_exact_corners=True, result_time_visible=1000,
-                                    handle_manual_corners=False, bg_video_input_filename="background.avi",
+                                    handle_manual_corners="discard", bg_video_input_filename="background.avi",
                                     output_manual_frame=False,
                                     output_manual_frame_filename="checkerboard_imagepoints.jpg",
                                     output_video=False, output_video_filename="intrinsics_imagepoints.mp4"):
@@ -412,9 +443,11 @@ def extract_image_points_from_video(chessboard_shape, video_input_path="data/cam
                                keeps original corner positions (not applied when automatic corner detection fails)
     :param result_time_visible: milliseconds to keep result of corner extraction for a frame to screen, 0 to wait for
                                 key press, -1 to not show result to screen
-    :param handle_manual_corners: if True then when automatic corner detection fails the user performs a process
-                                  to select corners manually, by sorting approximations or overriding them, otherwise
-                                  frames where automatic corner detection fails are discarded
+    :param handle_manual_corners: if set to "keep" then when automatic corner detection fails the user performs a
+                                  process to select corners manually, by sorting approximations or overriding them, if
+                                  set to "force" then this process is forced for every frame regardless of whether
+                                  automatic corner detection fails or not, and if set to "discard" then frames where
+                                  automatic corner detection fails are discarded
     :param bg_video_input_filename: training background video file name (including extension) in the same path as
                                     video_input_path, used for corner approximation if handle_manual_corners is True
     :param output_manual_frame: if True then outputs the first processed frame where automatic corner detection
@@ -472,7 +505,7 @@ def extract_image_points_from_video(chessboard_shape, video_input_path="data/cam
                                                                                    cv2.CALIB_CB_FAST_CHECK)
 
             # Additionally handling cases of manual corner selection if automatic detection failed
-            if not ret and handle_manual_corners:
+            if (not ret and handle_manual_corners == "keep") or (handle_manual_corners == "force"):
                 corners, _, approx_frame = \
                     extract_corners_and_interpolate_image_points(current_frame, chessboard_shape,
                                                                  bg_video_input_path=video_input_path,
@@ -954,7 +987,7 @@ if __name__ == '__main__':
         image_points, _ = \
             extract_image_points_from_video(chessboard_shape, cam_paths[camera-1], "checkerboard.avi",
                                             frame_interval=50, stop_frame=50, more_exact_corners=True,
-                                            result_time_visible=-1, handle_manual_corners=True,
+                                            result_time_visible=-1, handle_manual_corners="force",
                                             output_manual_frame=True)
 
         print("Running extrinsic calibration for camera " + str(camera) + ".")

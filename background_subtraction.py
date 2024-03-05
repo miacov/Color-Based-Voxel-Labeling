@@ -126,6 +126,7 @@ def train_MOG2_background_model(bg_video_input_path="data/cam", bg_video_input_f
 
     return background_model
 
+
 def extract_foreground_mask(image, bg_model, learning_rate=0, figure_threshold=5000, figure_inner_threshold=115,
                             apply_opening_pre=False, apply_closing_pre=False, apply_opening_post=False,
                             apply_closing_post=False):
@@ -156,6 +157,8 @@ def extract_foreground_mask(image, bg_model, learning_rate=0, figure_threshold=5
 
     # Apply background subtraction model and update it according to learning rate
     bg_model_mask = bg_model.apply(hsv_image, None, learning_rate)
+    # Remove potential shadows
+    bg_model_mask[bg_model_mask == 127] = 0
 
     # Erode and then dilate (opening) to remove noise
     if apply_opening_pre:
@@ -350,13 +353,24 @@ if __name__ == '__main__':
     cam4_path = os.path.join(data_path, "cam4")
     cam_paths = [cam1_path, cam2_path, cam3_path, cam4_path]
 
-    # Background model parameters for every camera
+    """
+    # Background model parameters for every camera for 1 figure
     # figure_threshold, figure_inner_threshold,
     # apply_opening_pre, apply_closing_pre, apply_opening_post, apply_closing_post
     cam1_bg_model_params = [5000, 115, False, False, True, True]
     cam2_bg_model_params = [5000, 115, False, False, True, True]
     cam3_bg_model_params = [5000, 175, False, True, True, True]
     cam4_bg_model_params = [5000, 115, False, False, False, True]
+    cam_bg_model_params = [cam1_bg_model_params, cam2_bg_model_params, cam3_bg_model_params, cam4_bg_model_params]
+    """
+
+    # Background model parameters for every camera for 4 figures
+    # figure_threshold, figure_inner_threshold,
+    # apply_opening_pre, apply_closing_pre, apply_opening_post, apply_closing_post
+    cam1_bg_model_params = [1500, 500, False, True, True, True]
+    cam2_bg_model_params = [1500, 500, False, True, True, True]
+    cam3_bg_model_params = [1500, 500, False, True, True, True]
+    cam4_bg_model_params = [1500, 500, False, True, True, True]
     cam_bg_model_params = [cam1_bg_model_params, cam2_bg_model_params, cam3_bg_model_params, cam4_bg_model_params]
 
     # Run background substraction for every camera
@@ -370,7 +384,7 @@ if __name__ == '__main__':
         # Train background models
         print("Subtracting background from video frame for camera " + str(camera) + " using KNN subtractor.")
         bg_model_knn = train_KNN_background_model(cam_paths[camera-1], "background.avi", use_hsv=True,
-                                                  history=frame_count, dist_threshold=3500, detect_shadows=False)
+                                                  history=frame_count, dist_threshold=3500, detect_shadows=True)
 
         foreground_knn = subtract_background_from_video(bg_model_knn, cam_paths[camera-1], "video.avi",
                                                         frame_interval=50, stop_frame=50, result_time_visible=-1,
@@ -398,17 +412,17 @@ if __name__ == '__main__':
 
         print("Subtracting background from video frame for camera " + str(camera) + " using MOG2 subtractor.\n")
         bg_model_mog2 = train_MOG2_background_model(cam_paths[camera-1], "background.avi", use_hsv=True,
-                                                    history=frame_count, var_threshold=650, detect_shadows=False)
+                                                    history=frame_count, var_threshold=500, detect_shadows=True)
 
         foreground_mog2 = subtract_background_from_video(bg_model_mog2, cam_paths[camera-1], "video.avi",
                                                          frame_interval=50, stop_frame=50, result_time_visible=-1,
                                                          output_frame=True, output_frame_filename="mask_MOG2.jpg",
-                                                         figure_threshold=cam_bg_model_params[camera - 1][0],
-                                                         figure_inner_threshold=cam_bg_model_params[camera - 1][1],
-                                                         apply_opening_pre=cam_bg_model_params[camera - 1][2],
-                                                         apply_closing_pre=cam_bg_model_params[camera - 1][3],
-                                                         apply_opening_post=cam_bg_model_params[camera - 1][4],
-                                                         apply_closing_post=cam_bg_model_params[camera - 1][5])[0]
+                                                         figure_threshold=cam_bg_model_params[camera-1][0],
+                                                         figure_inner_threshold=cam_bg_model_params[camera-1][1],
+                                                         apply_opening_pre=cam_bg_model_params[camera-1][2],
+                                                         apply_closing_pre=cam_bg_model_params[camera-1][3],
+                                                         apply_opening_post=cam_bg_model_params[camera-1][4],
+                                                         apply_closing_post=cam_bg_model_params[camera-1][5])[0]
 
         # Save extracted foregrounds
         foregrounds_knn.append(foreground_knn)

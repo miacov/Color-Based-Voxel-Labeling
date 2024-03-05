@@ -13,7 +13,8 @@ block_size = 1.0
 initialized = False
 videos = []
 bg_models = []
-# Background model parameters for every camera
+"""
+# Background model parameters for every camera to fit 1 figure in grid
 # figure_threshold, figure_inner_threshold,
 # apply_opening_pre, apply_closing_pre, apply_opening_post, apply_closing_post
 cam_bg_model_params = [
@@ -22,13 +23,28 @@ cam_bg_model_params = [
     [5000, 175, False, True, True, True],
     [5000, 115, False, False, False, True]
 ]
+bg_models_choice = "mog"
+"""
+# Background model parameters for every camera to fit 4 figures in grid
+# figure_threshold, figure_inner_threshold,
+# apply_opening_pre, apply_closing_pre, apply_opening_post, apply_closing_post
+cam_bg_model_params = [
+    [1500, 500, False, True, True, True],
+    [1500, 500, False, True, True, True],
+    [1500, 500, False, True, True, True],
+    [1500, 500, False, True, True, True]
+]
+bg_models_choice = "mog2"
 # Currently loaded frames and their index
 frame_count = 0
 frame_interval = 50
 # Lookup table for voxels
 lookup_table = None
 voxel_points = None
-voxel_size = 30
+# Voxel size to fit 1 figure in grid
+# voxel_size = 30
+# Voxel size to fit 4 figures in grid
+voxel_size = 45
 
 
 def generate_grid(width, depth):
@@ -53,7 +69,7 @@ def set_voxel_positions(width, height, depth):
     :return: returns visible voxel data and colors
     """
     global initialized, lookup_table, voxel_points, voxel_size, block_size, \
-        bg_models, cam_bg_model_params, videos, frame_count, frame_interval
+        bg_models, bg_models_choice, cam_bg_model_params, videos, frame_count, frame_interval
 
     # Check whether initialization with loading videos and training background models has already been done
     if not initialized:
@@ -68,10 +84,22 @@ def set_voxel_positions(width, height, depth):
             # Give frame count of video as history for background model training
             _, _, bg_frame_count = utils.get_video_properties(directory, "background.avi")
             # Train background model
-            bg_models.append(background_subtraction.train_MOG_background_model(directory, "background.avi",
-                                                                               use_hsv=True, history=bg_frame_count,
-                                                                               n_mixtures=50, bg_ratio=0.90,
-                                                                               noise_sigma=0))
+            if bg_models_choice == "mog":
+                bg_models.append(background_subtraction.train_MOG_background_model(directory, "background.avi",
+                                                                                   use_hsv=True, history=bg_frame_count,
+                                                                                   n_mixtures=50, bg_ratio=0.90,
+                                                                                   noise_sigma=0))
+            elif bg_models_choice == "mog2":
+                bg_models.append(background_subtraction.train_MOG2_background_model(directory, "background.avi",
+                                                                                    use_hsv=True,
+                                                                                    history=bg_frame_count,
+                                                                                    var_threshold=500,
+                                                                                    detect_shadows=True))
+            else:
+                bg_models.append(background_subtraction.train_KNN_background_model(directory, "background.avi",
+                                                                                   use_hsv=True, history=frame_count,
+                                                                                   dist_threshold=3500,
+                                                                                   detect_shadows=True))
 
         # Calculate voxel volume
         voxel_points = voxel_reconstruction.create_voxel_volume((width, height, depth), voxel_size, block_size)
@@ -137,8 +165,9 @@ def set_voxel_positions(width, height, depth):
                                  z * block_size - depth / 2])
 
                     # Use color of only 2nd camera (front) and convert to 0-1
-                    colors.append([voxels_on_colors[x, z, y][1][::-1] / 255.0])
-                    #colors.append([x / width, z / depth, y / height])
+                    #colors.append([voxels_on_colors[x, z, y][1][::-1] / 255.0])
+                    # Use generic coloring
+                    colors.append([x / width, z / depth, y / height])
 
     # Plot marching cubes algorithm results
     if frame_count-1 == 0:
