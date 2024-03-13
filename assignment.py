@@ -6,6 +6,7 @@ import os
 import background_subtraction
 import voxel_reconstruction
 import utils
+import pickle
 
 # Seed for reproducibility
 random.seed(0)
@@ -57,18 +58,17 @@ lookup_table = None
 voxel_points = None
 
 # Videos to get frames
-videos = []
+videos = None
 fps = 0
 # Currently loaded frames and their index
 frame_count = 0
-frame_interval = 50
+frame_interval = 5
 
 # Background models
-bg_models = []
+bg_models = None
 
 # Color models
 color_models = None
-
 # Cameras used for color models
 cam_color_models = [1, 2, 4]
 # Color model cropping (top, bottom, left, right) for every camera
@@ -76,8 +76,11 @@ cam_color_model_crops = [
     [0.2, 0.2, 0.2],
     [0.45, 0.45, 0.45],
     [0.0, 0.0, 0.0],
-    [0.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0]
 ]
+# Trajectories
+trajectories = None
+last_labels = None
 
 
 def generate_grid(width, depth):
@@ -109,12 +112,15 @@ def set_voxel_positions(width, height, depth):
     """
     global cam_reconstruction, cam_color, color_palette, figure_num, \
         lookup_table, voxel_points, voxel_size, block_size, videos, fps, frame_count, frame_interval, \
-        bg_models, bg_models_choice, cam_bg_model_params, color_models, cam_color_models, cam_color_model_crops
+        bg_models, bg_models_choice, cam_bg_model_params, color_models, cam_color_models, cam_color_model_crops, \
+        trajectories, last_labels
 
     # Initialize background models, voxel volume, and lookup table
     if lookup_table is None:
         print("Initializing background models, voxel volume, and lookup table.")
         # Load videos and train background models for every camera
+        videos = []
+        bg_models = []
         for camera in cam_reconstruction:
             directory = os.path.join("data", "cam" + str(camera))
 
@@ -149,6 +155,9 @@ def set_voxel_positions(width, height, depth):
         # Create lookup table to map 3D voxels to 2D image points for each camera view
         lookup_table = voxel_reconstruction.create_lookup_table(voxel_points, cam_reconstruction, "data", "config.xml")
 
+        # Create empty list of trajectories for each figure
+        trajectories = [[] for _ in range(figure_num)]
+
     # Read next frame in every video with interval
     current_frames = []
     for video in videos:
@@ -161,15 +170,31 @@ def set_voxel_positions(width, height, depth):
                 for cap in videos:
                     cap.release()
 
+                # Plot raw trajectories image
+                voxel_reconstruction.plot_cluster_center_trajectories(trajectories, last_labels, color_palette, 0,
+                                                                      "plots", "trajectories_raw.png")
+                # Plot interpolated trajectories image
+                voxel_reconstruction.plot_cluster_center_trajectories(trajectories, last_labels, color_palette,
+                                                                      int(frame_count-1/frame_interval)*5,
+                                                                      "plots", "trajectories_smooth_1.png")
+
+                # Save trajectories
+                with open(os.path.join("data", "trajectories"), "wb") as file:
+                    pickle.dump(trajectories, file)
+
                 # Reset everything to initial states to restart on next function call
                 lookup_table = None
                 voxel_points = None
-                videos = []
+                videos = None
                 frame_count = 0
-                bg_models = []
+                bg_models = None
                 color_models = None
+                trajectories = None
+                last_labels = None
 
-                return [], [], [], [], [], [], [], [], True
+                print("\nVideos have ended. Parameters are reset and next generation will restart process.\n")
+
+                return [], [], [], [], [], [], [], True
 
             # Check if frame will be used according to interval
             if frame_count_video % frame_interval == 0:
@@ -236,6 +261,7 @@ def set_voxel_positions(width, height, depth):
 
     # Match online color models to offline color models
     matches = voxel_reconstruction.match_color_models(current_color_models, color_models)
+    last_labels = matches
 
     # Label online color models with matches to offline color models
     clusters_visible_voxel_points, clusters_voxel_points_label_colors \
@@ -249,6 +275,9 @@ def set_voxel_positions(width, height, depth):
     if frame_count-1 == 150:
         voxel_reconstruction.plot_visible_voxel_clusters(centers, clusters, outliers, matches, color_palette,
                                                          plot_output_filename="voxel_clusters_online.png")
+
+    # Update trajectories with new cluster centers
+    trajectories = voxel_reconstruction.update_cluster_center_trajectories(centers, trajectories, matches)
 
     if is_first_frame:
         # Plot marching cubes algorithm results

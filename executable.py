@@ -12,6 +12,7 @@ from engine.config import config
 import OpenGL.GL as gl
 from PIL import Image
 import os
+import cv2
 
 cube, hdrbuffer, blurbuffer, lastPosX, lastPosY = None, None, None, None, None
 # Default voxel presentation, options:
@@ -42,7 +43,7 @@ def take_window_screenshot(window, screenshot_output_path="ss", screenshot_outpu
 
     :param window: execution window
     :param screenshot_output_path: screenshot output directory path
-    :param screenshot_output_filename: screenshot output file name
+    :param screenshot_output_filename: screenshot output file name (including extension)
     """
     # Take screenshot
     width, height = glfw.get_framebuffer_size(window)
@@ -53,6 +54,53 @@ def take_window_screenshot(window, screenshot_output_path="ss", screenshot_outpu
 
     # Save screenshot
     image.save(os.path.join(screenshot_output_path, screenshot_output_filename))
+
+
+def compile_window_screenshots_into_video(screenshot_input_path="ss", video_output_filename="compiled_shots.mp4"):
+    """
+    Compiles screenshots of the open execution window into a video and outputs it.
+
+    :param screenshot_input_path: screenshot input directory path
+    :param video_output_filename: video output file name (including extension), file is saved in the same path as
+                                  screenshot_input_path
+    """
+    # Get screenshot files
+    image_files = [os.path.join(screenshot_input_path, file) for file in os.listdir(screenshot_input_path)
+                   if file.startswith("shot") and file.endswith(".png")]
+    # Sort files
+    image_files.sort()
+
+    # Read the first image to get the dimensions
+    first_image = cv2.imread(image_files[0])
+    height, width, _ = first_image.shape
+
+    # Define the codec for MP4 and create VideoWriter object for output video
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    output_cap = cv2.VideoWriter(os.path.join(screenshot_input_path, video_output_filename), fourcc, 1,
+                                 (width, height))
+
+    # Write each image to the video writer
+    for image_file in image_files:
+        image = cv2.imread(image_file)
+        output_cap.write(image)
+    output_cap.release()
+
+
+def delete_screenshots_and_videos(file_path="ss"):
+    """
+    Deletes taken screenshots and compiled videos.
+
+    :param file_path: directory path
+    """
+    # Select screenshots and videos
+    image_files = [os.path.join(file_path, file) for file in os.listdir(file_path)
+                   if file.startswith("shot") and file.endswith(".png")]
+    video_files = [os.path.join(file_path, file) for file in os.listdir(file_path) if file.endswith(".mp4")]
+    files = image_files + video_files
+
+    # Delete files
+    for file in files:
+        os.remove(file)
 
 
 def draw_objs(obj, program, perspective, light_pos, texture, normal, specular, depth):
@@ -208,6 +256,9 @@ def main():
                     None, None, None, None, None, None, None
                 isLooping = False
                 sceneRendered = False
+
+                # Combine screenshots into video
+                compile_window_screenshots_into_video("ss", "compiled_shots.mp4")
             else:
                 sceneRendered = True
 
@@ -297,6 +348,9 @@ def key_callback(window, key, scancode, action, mods):
                 positionsWithOutliers, colorsWithOutliers, colorsCameraWithOutliers = \
                 None, None, None, None, None, None, None
             sceneRendered = False
+
+            # Combine screenshots into video
+            compile_window_screenshots_into_video("ss", "compiled_shots.mp4")
         else:
             sceneRendered = True
 
@@ -361,4 +415,5 @@ def move_input(win, time):
 
 
 if __name__ == '__main__':
+    delete_screenshots_and_videos("ss")
     main()

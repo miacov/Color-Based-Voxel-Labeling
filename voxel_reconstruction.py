@@ -4,6 +4,7 @@ import os
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from scipy.optimize import linear_sum_assignment
+from scipy import interpolate
 from skimage import measure
 from copy import deepcopy
 import utils
@@ -358,15 +359,15 @@ def plot_visible_voxel_clusters(centers, clusters, outliers=None, labels=None, c
         else:
             color = color_palette[labels[cluster_idx] % len(color_palette)]
 
-        plt.scatter(cluster_voxels[:, 0], cluster_voxels[:, 2],
-                    color=color, marker="o", label="Cluster " + str(cluster_idx))
+        ax.scatter(cluster_voxels[:, 0], cluster_voxels[:, 2],
+                   color=color, marker="o", label="Cluster " + str(cluster_idx))
 
     # Plot cluster centers
-    plt.scatter(centers[:, 0], centers[:, 1], s=100, color="black", marker="x", label="Centers")
+    ax.scatter(centers[:, 0], centers[:, 1], s=100, color="black", marker="x", label="Centers")
 
     # Plot outliers
     if outliers is not None:
-        plt.scatter(outliers[:, 0], outliers[:, 2], color="darkgray", marker="o", label="Outliers")
+        ax.scatter(outliers[:, 0], outliers[:, 2], color="darkgray", marker="o", label="Outliers")
 
     # Set axes
     ax.set_title("Clustered Voxel Points")
@@ -570,6 +571,97 @@ def label_visible_voxels_with_color(clusters, labels, color_palette=None):
             clusters_voxel_points_label_colors.append(label_colors[cluster_idx])
 
     return clusters_voxel_points, clusters_voxel_points_label_colors
+
+
+def update_cluster_center_trajectories(centers, trajectories, labels):
+    """
+    Updates trajectories based on cluster centers.
+
+    :param centers: array of 2D cluster centers
+    :param trajectories: array of arrays of 2D trajectory points for every cluster
+    :param labels: labels for coloring clusters according to color palette indexes, if None then coloring in order
+    :return:
+    """
+    for cluster_idx, center in enumerate(centers):
+        # Color in order of index
+        if labels is None:
+            trajectories[cluster_idx].append(center)
+        # Match label to color
+        else:
+            trajectories[labels[cluster_idx]].append(center)
+
+    return trajectories
+
+
+def plot_cluster_center_trajectories(trajectories, labels=None, color_palette=None, interpolation_samples=0,
+                                     plot_output_path="plots", plot_output_filename="trajectories.png"):
+    """
+    Plots every trajectory point to visualize paths. Interpolation can be used to fill in empty spaces.
+
+    :param trajectories: array of arrays of 2D trajectory points for every cluster
+    :param labels: labels for coloring clusters according to color palette indexes, if None then coloring in order
+    :param color_palette: color palette to choose cluster color using modulo, if None then uses a default palette
+    :param interpolation_samples: number of samples used for interpolation, if 0 then only raw trajectory points are
+                                  used
+    :param plot_output_path: plot output directory path
+    :param plot_output_filename: plot output file name (including extension)
+    :return:
+    """
+    # Default palette
+    if color_palette is None:
+        color_palette = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [0, 1, 1],
+                         [1, 0.5, 0], [0, 0.5, 1], [0.5, 0, 1], [1, 0, 1], [1, 0, 0.5]]
+
+    # Create plot figure
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111)
+
+    # Plot clusters
+    for cluster_idx in range(len(trajectories)):
+        # Color in order of index
+        if labels is None:
+            color = color_palette[cluster_idx % len(color_palette)]
+
+            # Apply interpolation
+            if interpolation_samples > 0:
+                tck, u = interpolate.splprep(np.array(trajectories[cluster_idx]).T, s=0)
+                x_points, y_points = interpolate.splev(np.linspace(0, 1, interpolation_samples), tck)
+            # Keep raw points
+            else:
+                x_points = [position[0] for position in trajectories[cluster_idx]]
+                y_points = [position[1] for position in trajectories[cluster_idx]]
+        # Match label to color
+        else:
+            color = color_palette[labels[cluster_idx] % len(color_palette)]
+
+            # Apply interpolation
+            if interpolation_samples > 0:
+                tck, u = interpolate.splprep(np.array(trajectories[labels[cluster_idx]]).T, s=0)
+                x_points, y_points = interpolate.splev(np.linspace(0, 1, interpolation_samples), tck)
+            # Keep raw points
+            else:
+                x_points = [position[0] for position in trajectories[labels[cluster_idx]]]
+                y_points = [position[1] for position in trajectories[labels[cluster_idx]]]
+        ax.scatter(x_points, y_points, color=color, marker="s", s=10)
+
+    # Set axes
+    ax.set_title("Trajectory Points for Every Figure")
+    ax.set_xlabel("X (width)")
+    ax.set_ylabel("Z (depth)")
+    ax.invert_yaxis()
+    # Set the aspect ratio to be equal
+    ax.set_aspect("equal")
+
+    # Adjust plot
+    plt.tight_layout()
+
+    # Save plot
+    plt.savefig(os.path.join(plot_output_path, plot_output_filename))
+
+    # Close figure
+    plt.close()
+
+
 
 
 
