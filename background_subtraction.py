@@ -2,7 +2,6 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-from copy import deepcopy
 import utils
 
 
@@ -129,13 +128,13 @@ def train_MOG2_background_model(bg_video_input_path="data/cam", bg_video_input_f
 
 def extract_foreground_mask(image, bg_model, learning_rate=0, figure_threshold=5000, figure_inner_threshold=115,
                             apply_opening_pre=False, apply_closing_pre=False, apply_opening_post=False,
-                            apply_closing_post=False):
+                            apply_closing_post=False, apply_dilation_post=False):
     """
     Extracts foreground mask from image by using a background subtraction model and thresholding. After a mask is given
     by the background model, contours larger than figure_threshold are drawn in with white. For each of these contours,
     if they have inner contours with areas larger than figure_inner_threshold then those areas are drawn in with black
     to bring back lost islands inside the contours. A series of morphological transformations before or after drawing
-    the contours with parameters.
+    the contours can be performed with parameters.
 
     :param image: BGR image
     :param bg_model: trained background model
@@ -143,20 +142,24 @@ def extract_foreground_mask(image, bg_model, learning_rate=0, figure_threshold=5
     :param figure_threshold: contour will be drawn in white if its area is larger than this threshold
     :param figure_inner_threshold: inner contour child of a contour passing figure_threshold will be drawn in black if
                                    its area is larger than this threshold
-    :param apply_opening_pre: erode and then dilates (opening) to remove noise before drawing contours if True
-    :param apply_closing_pre: dilate and then erodes (closing) to close small holes before drawing contours if True
+    :param apply_opening_pre: erodes and then dilates (opening) to remove noise from foreground mask before drawing
+                              contours if True
+    :param apply_closing_pre: dilates and then erodes (closing) to close small holes on the foreground mask before
+                              drawing contours if True
                               (performed after opening if apply_opening is also True)
-    :param apply_opening_post: erode and then dilates (opening) to remove noise after drawing contours if True
-    :param apply_closing_post: dilate and then erodes (closing) to close small holes after drawing contours if True
-                               (performed after opening if apply_opening is also True)
+    :param apply_opening_post: erodes and then dilates (opening) to remove noise from the foreground mask after drawing
+                               contours if True
+    :param apply_closing_post: dilates and then erodes (closing) to close small holes on the foreground mask after
+                               drawing contours if True (performed after opening if apply_opening is also True)
+    :param apply_dilation_post: dilates to connect any disconnected blobs on the foreground mask at the end of all other
+                                operations if True
     :return: returns the extracted foreground mask
     """
     # Convert image to HSV
-    bgr_image = deepcopy(image)
-    hsv_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2HSV)
+    image_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
     # Apply background subtraction model and update it according to learning rate
-    bg_model_mask = bg_model.apply(hsv_image, None, learning_rate)
+    bg_model_mask = bg_model.apply(image_hsv, None, learning_rate)
     # Remove potential shadows
     bg_model_mask[bg_model_mask == 127] = 0
 
@@ -205,6 +208,11 @@ def extract_foreground_mask(image, bg_model, learning_rate=0, figure_threshold=5
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
         foreground = cv2.morphologyEx(foreground, cv2.MORPH_CLOSE, kernel)
 
+    # Dilate to connect any disconnected blobs
+    if apply_dilation_post:
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        foreground = cv2.dilate(foreground, kernel)
+
     # Final threshold
     foreground[foreground > 0] = 255
 
@@ -216,7 +224,7 @@ def subtract_background_from_video(bg_model, video_input_path="data/cam", video_
                                    output_frame=False, output_frame_filename="mask.jpg", learning_rate=0,
                                    figure_threshold=5000, figure_inner_threshold=115,
                                    apply_opening_pre=False, apply_closing_pre=False, apply_opening_post=False,
-                                   apply_closing_post=False):
+                                   apply_closing_post=False, apply_dilation_post=False):
     """
     Parses frames of given video and subtracts the background to extract foreground mask.
 
@@ -234,12 +242,17 @@ def subtract_background_from_video(bg_model, video_input_path="data/cam", video_
     :param figure_threshold: contour will be drawn in white if its area is larger than this threshold
     :param figure_inner_threshold: inner contour child of a contour passing figure_threshold will be drawn in black if
                                    its area is larger than this threshold
-    :param apply_opening_pre: erode and then dilates (opening) to remove noise before drawing contours if True
-    :param apply_closing_pre: dilate and then erodes (closing) to close small holes before drawing contours if True
+    :param apply_opening_pre: erodes and then dilates (opening) to remove noise from foreground mask before drawing
+                              contours if True
+    :param apply_closing_pre: dilates and then erodes (closing) to close small holes on the foreground mask before
+                              drawing contours if True
                               (performed after opening if apply_opening is also True)
-    :param apply_opening_post: erode and then dilates (opening) to remove noise after drawing contours if True
-    :param apply_closing_post: dilate and then erodes (closing) to close small holes after drawing contours if True
-                               (performed after opening if apply_opening is also True)
+    :param apply_opening_post: erodes and then dilates (opening) to remove noise from the foreground mask after drawing
+                               contours if True
+    :param apply_closing_post: dilates and then erodes (closing) to close small holes on the foreground mask after
+                               drawing contours if True (performed after opening if apply_opening is also True)
+    :param apply_dilation_post: dilates to connect any disconnected blobs on the foreground mask at the end of all other
+                                operations if True
     :return: returns array of extracted foreground masks for every processed video frame
     """
     # Check that video can be loaded
@@ -271,7 +284,8 @@ def subtract_background_from_video(bg_model, video_input_path="data/cam", video_
                                                  apply_opening_pre=apply_opening_pre,
                                                  apply_closing_pre=apply_closing_pre,
                                                  apply_opening_post=apply_opening_post,
-                                                 apply_closing_post=apply_closing_post)
+                                                 apply_closing_post=apply_closing_post,
+                                                 apply_dilation_post=apply_dilation_post)
 
             # Store extracted foreground
             foregrounds.append(foreground)
@@ -356,21 +370,21 @@ if __name__ == '__main__':
     """
     # Background model parameters for every camera for 1 figure
     # figure_threshold, figure_inner_threshold,
-    # apply_opening_pre, apply_closing_pre, apply_opening_post, apply_closing_post
-    cam1_bg_model_params = [5000, 115, False, False, True, True]
-    cam2_bg_model_params = [5000, 115, False, False, True, True]
-    cam3_bg_model_params = [5000, 175, False, True, True, True]
-    cam4_bg_model_params = [5000, 115, False, False, False, True]
+    # apply_opening_pre, apply_closing_pre, apply_opening_post, apply_closing_post, apply_dilation_post
+    cam1_bg_model_params = [5000, 115, False, False, True, True, False]
+    cam2_bg_model_params = [5000, 115, False, False, True, True, False]
+    cam3_bg_model_params = [5000, 175, False, True, True, True, False]
+    cam4_bg_model_params = [5000, 115, False, False, False, True, False]
     cam_bg_model_params = [cam1_bg_model_params, cam2_bg_model_params, cam3_bg_model_params, cam4_bg_model_params]
     """
 
     # Background model parameters for every camera for 4 figures
     # figure_threshold, figure_inner_threshold,
-    # apply_opening_pre, apply_closing_pre, apply_opening_post, apply_closing_post
-    cam1_bg_model_params = [1500, 500, False, True, True, True]
-    cam2_bg_model_params = [1500, 500, False, True, True, True]
-    cam3_bg_model_params = [1500, 500, False, True, True, True]
-    cam4_bg_model_params = [1500, 500, False, True, True, True]
+    # apply_opening_pre, apply_closing_pre, apply_opening_post, apply_closing_post, apply_dilation_post
+    cam1_bg_model_params = [1500, 500, False, True, True, True, True]
+    cam2_bg_model_params = [1500, 500, False, True, True, True, True]
+    cam3_bg_model_params = [1500, 500, False, True, True, True, False]
+    cam4_bg_model_params = [1500, 500, False, True, True, True, True]
     cam_bg_model_params = [cam1_bg_model_params, cam2_bg_model_params, cam3_bg_model_params, cam4_bg_model_params]
 
     # Run background substraction for every camera
@@ -394,7 +408,8 @@ if __name__ == '__main__':
                                                         apply_opening_pre=cam_bg_model_params[camera-1][2],
                                                         apply_closing_pre=cam_bg_model_params[camera-1][3],
                                                         apply_opening_post=cam_bg_model_params[camera-1][4],
-                                                        apply_closing_post=cam_bg_model_params[camera-1][5])[0]
+                                                        apply_closing_post=cam_bg_model_params[camera-1][5],
+                                                        apply_dilation_post=cam_bg_model_params[camera-1][6])[0]
 
         print("Subtracting background from video frame for camera " + str(camera) + " using MOG subtractor.")
         bg_model_mog = train_MOG_background_model(cam_paths[camera-1], "background.avi", use_hsv=True,
@@ -408,7 +423,8 @@ if __name__ == '__main__':
                                                         apply_opening_pre=cam_bg_model_params[camera-1][2],
                                                         apply_closing_pre=cam_bg_model_params[camera-1][3],
                                                         apply_opening_post=cam_bg_model_params[camera-1][4],
-                                                        apply_closing_post=cam_bg_model_params[camera-1][5])[0]
+                                                        apply_closing_post=cam_bg_model_params[camera-1][5],
+                                                        apply_dilation_post=cam_bg_model_params[camera-1][6])[0]
 
         print("Subtracting background from video frame for camera " + str(camera) + " using MOG2 subtractor.\n")
         bg_model_mog2 = train_MOG2_background_model(cam_paths[camera-1], "background.avi", use_hsv=True,
@@ -422,7 +438,8 @@ if __name__ == '__main__':
                                                          apply_opening_pre=cam_bg_model_params[camera-1][2],
                                                          apply_closing_pre=cam_bg_model_params[camera-1][3],
                                                          apply_opening_post=cam_bg_model_params[camera-1][4],
-                                                         apply_closing_post=cam_bg_model_params[camera-1][5])[0]
+                                                         apply_closing_post=cam_bg_model_params[camera-1][5],
+                                                         apply_dilation_post=cam_bg_model_params[camera-1][6])[0]
 
         # Save extracted foregrounds
         foregrounds_knn.append(foreground_knn)

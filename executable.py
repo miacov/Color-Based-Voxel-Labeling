@@ -9,11 +9,50 @@ from engine.effect.bloom import Bloom
 from assignment import set_voxel_positions, generate_grid, get_cam_positions, get_cam_rotation_matrices
 from engine.camera import Camera
 from engine.config import config
+import OpenGL.GL as gl
+from PIL import Image
+import os
 
 cube, hdrbuffer, blurbuffer, lastPosX, lastPosY = None, None, None, None, None
+# Default voxel presentation, options:
+# generic: no outlier voxels, generic coloring
+# generic_outliers: includes outlier voxels, generic coloring
+# color: no outlier voxels, camera view coloring
+# color_outliers: includes outlier voxels, camera view coloring
+# tracking: no outlier voxels, cluster coloring for tracking
+defaultVisual = "tracking"
+# Generated voxel positions and colors for presentation
+positions, colors, colorsCamera, colorsTracking, positionsWithOutliers, colorsWithOutliers, colorsCameraWithOutliers = \
+    None, None, None, None, None, None, None
+# Flag to indicate if looping voxel generation process
+isLooping = False
+# Flags for screenshots, if True then takes a screenshot for every frame change
+takeScreenshots = True
+screenshotFrame = 0
+sceneRendered = False
+
 firstTime = True
 window_width, window_height = config['window_width'], config['window_height']
 camera = Camera(glm.vec3(0, 100, 0), pitch=-90, yaw=0, speed=40)
+
+
+def take_window_screenshot(window, screenshot_output_path="ss", screenshot_output_filename="screenshot.png"):
+    """
+    Takes a screenshot of the open execution window and outputs it.
+
+    :param window: execution window
+    :param screenshot_output_path: screenshot output directory path
+    :param screenshot_output_filename: screenshot output file name
+    """
+    # Take screenshot
+    width, height = glfw.get_framebuffer_size(window)
+    data = gl.glReadPixels(0, 0, width, height, gl.GL_RGB, gl.GL_UNSIGNED_BYTE)
+    image = Image.frombytes("RGB", (width, height), data)
+    # OpenGL stores images upside down
+    image = image.transpose(Image.FLIP_TOP_BOTTOM)
+
+    # Save screenshot
+    image.save(os.path.join(screenshot_output_path, screenshot_output_filename))
 
 
 def draw_objs(obj, program, perspective, light_pos, texture, normal, specular, depth):
@@ -44,7 +83,10 @@ def draw_objs(obj, program, perspective, light_pos, texture, normal, specular, d
 
 
 def main():
-    global hdrbuffer, blurbuffer, cube, window_width, window_height
+    global hdrbuffer, blurbuffer, cube, window_width, window_height, \
+        positions, colors, colorsCamera, colorsTracking, \
+        positionsWithOutliers, colorsWithOutliers, colorsCameraWithOutliers, \
+        isLooping, takeScreenshots, screenshotFrame, sceneRendered
 
     if not glfw.init():
         print('Failed to initialize GLFW.')
@@ -137,6 +179,38 @@ def main():
 
         move_input(window, delta_time)
 
+        # Loop for frames if L was pressed during key_callback
+        if isLooping:
+            positions, colors, colorsCamera, colorsTracking, \
+                positionsWithOutliers, colorsWithOutliers, colorsCameraWithOutliers, isFinished \
+                = set_voxel_positions(config['world_width'], config['world_height'], config['world_width'])
+
+            # tracking: no outlier voxels, cluster coloring for tracking
+            if defaultVisual == "tracking":
+                cube.set_multiple_positions(positions, colorsTracking)
+            # color: no outlier voxels, camera view coloring
+            elif defaultVisual == "color":
+                cube.set_multiple_positions(positions, colorsCamera)
+            # color_outliers: includes outlier voxels, camera view coloring
+            elif defaultVisual == "color_outliers":
+                cube.set_multiple_positions(positionsWithOutliers, colorsCameraWithOutliers)
+            # generic: no outlier voxels, generic coloring
+            elif defaultVisual == "generic":
+                cube.set_multiple_positions(positions, colors)
+            # generic_outliers: includes outlier voxels, generic coloring
+            else:
+                cube.set_multiple_positions(positionsWithOutliers, colorsWithOutliers)
+
+            # Reset and stop looping if finished
+            if isFinished:
+                positions, colors, colorsCamera, colorsTracking, \
+                    positionsWithOutliers, colorsWithOutliers, colorsCameraWithOutliers = \
+                    None, None, None, None, None, None, None
+                isLooping = False
+                sceneRendered = False
+            else:
+                sceneRendered = True
+
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glClearColor(0.1, 0.2, 0.8, 1)
 
@@ -161,6 +235,12 @@ def main():
 
         bloom.draw_processed_scene()
 
+        # Screenshot after first visualization of voxels
+        if sceneRendered and takeScreenshots:
+            take_window_screenshot(window, "ss", "shot" + str(screenshotFrame) + ".png")
+            screenshotFrame += 1
+            sceneRendered = False
+
         glfw.poll_events()
         glfw.swap_buffers(window)
 
@@ -180,12 +260,81 @@ def resize_callback(window, w, h):
 
 
 def key_callback(window, key, scancode, action, mods):
+    global cube, defaultVisual, \
+        positions, colors, colorsCamera, colorsTracking, \
+        positionsWithOutliers, colorsWithOutliers, colorsCameraWithOutliers, \
+        isLooping, takeScreenshots, screenshotFrame, sceneRendered
+
+    # Exit window
     if key == glfw.KEY_ESCAPE and action == glfw.PRESS:
         glfw.set_window_should_close(window, glfw.TRUE)
+
+    # Generate next frame voxels
     if key == glfw.KEY_G and action == glfw.PRESS:
-        global cube
-        positions, colors = set_voxel_positions(config['world_width'], config['world_height'], config['world_width'])
-        cube.set_multiple_positions(positions, colors)
+        positions, colors, colorsCamera, colorsTracking, \
+            positionsWithOutliers, colorsWithOutliers, colorsCameraWithOutliers, isFinished \
+            = set_voxel_positions(config['world_width'], config['world_height'], config['world_width'])
+
+        # tracking: no outlier voxels, cluster coloring for tracking
+        if defaultVisual == "tracking":
+            cube.set_multiple_positions(positions, colorsTracking)
+        # color: no outlier voxels, camera view coloring
+        elif defaultVisual == "color":
+            cube.set_multiple_positions(positions, colorsCamera)
+        # color_outliers: includes outlier voxels, camera view coloring
+        elif defaultVisual == "color_outliers":
+            cube.set_multiple_positions(positionsWithOutliers, colorsCameraWithOutliers)
+        # generic: no outlier voxels, generic coloring
+        elif defaultVisual == "generic":
+            cube.set_multiple_positions(positions, colors)
+        # generic_outliers: includes outlier voxels, generic coloring
+        else:
+            cube.set_multiple_positions(positionsWithOutliers, colorsWithOutliers)
+
+        # Reset if finished
+        if isFinished:
+            positions, colors, colorsCamera, colorsTracking,\
+                positionsWithOutliers, colorsWithOutliers, colorsCameraWithOutliers = \
+                None, None, None, None, None, None, None
+            sceneRendered = False
+        else:
+            sceneRendered = True
+
+    # Loop over remainder of frames in main loop
+    if key == glfw.KEY_L and action == glfw.PRESS:
+        isLooping = True
+
+    # Change visual
+    if key == glfw.KEY_1 and action == glfw.PRESS:
+        # Show generic_outliers: includes outlier voxels, generic coloring
+        if positions is not None:
+            cube.set_multiple_positions(positionsWithOutliers, colorsWithOutliers)
+        # Set to default for next generation for continuity
+        defaultVisual = "generic_outliers"
+    if key == glfw.KEY_2 and action == glfw.PRESS:
+        # Show color_outliers: includes outlier voxels, camera view coloring
+        if positions is not None:
+            cube.set_multiple_positions(positionsWithOutliers, colorsCameraWithOutliers)
+        # Set to default for next generation for continuity
+        defaultVisual = "color_outliers"
+    if key == glfw.KEY_3 and action == glfw.PRESS:
+        # Show generic: no outlier voxels, generic coloring
+        if positions is not None:
+            cube.set_multiple_positions(positions, colors)
+        # Set to default for next generation for continuity
+        defaultVisual = "generic"
+    if key == glfw.KEY_4 and action == glfw.PRESS:
+        # Show color: no outlier voxels, camera view coloring
+        if positions is not None:
+            cube.set_multiple_positions(positions, colorsCamera)
+        # Set to default for next generation for continuity
+        defaultVisual = "color"
+    if key == glfw.KEY_5 and action == glfw.PRESS:
+        # Show tracking: no outlier voxels, cluster coloring for tracking
+        if positions is not None:
+            cube.set_multiple_positions(positions, colorsTracking)
+        # Set to default for next generation for continuity
+        defaultVisual = "tracking"
 
 
 def mouse_move(win, pos_x, pos_y):
