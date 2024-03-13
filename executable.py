@@ -13,6 +13,7 @@ import OpenGL.GL as gl
 from PIL import Image
 import os
 import cv2
+import re
 
 cube, hdrbuffer, blurbuffer, lastPosX, lastPosY = None, None, None, None, None
 # Default voxel presentation, options:
@@ -67,8 +68,8 @@ def compile_window_screenshots_into_video(screenshot_input_path="ss", video_outp
     # Get screenshot files
     image_files = [os.path.join(screenshot_input_path, file) for file in os.listdir(screenshot_input_path)
                    if file.startswith("shot") and file.endswith(".png")]
-    # Sort files
-    image_files.sort()
+    # Sort files (avoid case like shot2 being after shot11)
+    image_files.sort(key=lambda s: [int(text) if text.isdigit() else text.lower() for text in re.split(r"(\d+)", s)])
 
     # Read the first image to get the dimensions
     first_image = cv2.imread(image_files[0])
